@@ -1,0 +1,271 @@
+name: Build SIYOMA Apps Hub Website
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Validate and Package SIYOMA Apps Hub
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify SIYOMA Apps Hub project structure
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Checking SIYOMA Apps Hub files..."
+
+          test -f index.html
+          test -f styles.css
+          test -f app.js
+          test -f netlify.toml
+          test -f README.md
+
+          test -d assets
+
+          echo "Core website files verified."
+
+      - name: Verify required SIYOMA assets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Checking website assets..."
+
+          ASSET_COUNT=$(find assets -type f | wc -l)
+
+          if [ "$ASSET_COUNT" -lt 1 ]; then
+            echo "ERROR: No website assets found."
+            exit 1
+          fi
+
+          echo "Found $ASSET_COUNT asset file(s)."
+
+      - name: Validate HTML
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! grep -qi '<!DOCTYPE html>' index.html; then
+            echo "ERROR: index.html does not contain a valid HTML5 doctype."
+            exit 1
+          fi
+
+          if ! grep -qi '<html' index.html; then
+            echo "ERROR: HTML root element not found."
+            exit 1
+          fi
+
+          if ! grep -qi '<head' index.html; then
+            echo "ERROR: HTML head section not found."
+            exit 1
+          fi
+
+          if ! grep -qi '<body' index.html; then
+            echo "ERROR: HTML body section not found."
+            exit 1
+          fi
+
+          echo "HTML structure verified."
+
+      - name: Verify SIYOMA Apps Hub branding and core sections
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Checking SIYOMA Apps Hub content..."
+
+          grep -qi "SIYOMA APPS HUB" index.html
+          grep -qi "Siyomatechdesigns" index.html
+
+          grep -qi "Tenant" index.html
+          grep -qi "GroupWork" index.html
+          grep -qi "CU Library" index.html
+          grep -qi "Academic Assistant" index.html
+
+          grep -qi "Under Review" index.html
+
+          echo "SIYOMA Apps Hub content verified."
+
+      - name: Verify developer WhatsApp integration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! grep -q "254713622247" index.html; then
+            echo "ERROR: SIYOMA Tech Designs WhatsApp contact link not found."
+            exit 1
+          fi
+
+          echo "Developer WhatsApp integration verified."
+
+      - name: Verify Netlify configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! grep -q 'publish' netlify.toml; then
+            echo "ERROR: Netlify publish configuration not found."
+            exit 1
+          fi
+
+          echo "Netlify configuration verified."
+
+      - name: Check for accidentally committed secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Checking frontend files for obvious secret patterns..."
+
+          if grep -RniE \
+            --exclude-dir=.git \
+            --exclude='*.map' \
+            'sk_live_|sk_test_|secret_key|private_key|BEGIN PRIVATE KEY' \
+            .; then
+            echo "ERROR: Possible secret detected in repository."
+            exit 1
+          fi
+
+          echo "No obvious secrets detected."
+
+      - name: Check internal website references
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Checking referenced local files..."
+
+          python3 <<'PY'
+          import re
+          from pathlib import Path
+
+          html = Path("index.html").read_text(encoding="utf-8")
+
+          references = set()
+
+          for match in re.findall(r'(?:src|href)=["\']([^"\']+)["\']', html):
+              if match.startswith((
+                  "http://",
+                  "https://",
+                  "#",
+                  "mailto:",
+                  "tel:",
+                  "data:"
+              )):
+                  continue
+
+              clean = match.split("#")[0].split("?")[0]
+
+              if clean:
+                  references.add(clean)
+
+          missing = []
+
+          for ref in sorted(references):
+              path = Path(ref)
+
+              if not path.exists():
+                  missing.append(ref)
+
+          if missing:
+              print("ERROR: Missing referenced files:")
+
+              for item in missing:
+                  print(f" - {item}")
+
+              raise SystemExit(1)
+
+          print("All local HTML references are valid.")
+          PY
+
+      - name: Create production website package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -rf release
+          mkdir -p release
+
+          cp index.html release/
+          cp styles.css release/
+          cp app.js release/
+          cp netlify.toml release/
+          cp README.md release/
+
+          cp -R assets release/
+
+          echo "Production website package created."
+
+      - name: Verify production package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -f release/index.html
+          test -f release/styles.css
+          test -f release/app.js
+          test -f release/netlify.toml
+          test -f release/README.md
+          test -d release/assets
+
+          echo "Production package verified."
+
+      - name: Create ZIP archive
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd release
+
+          zip -qr \
+            ../SIYOMA-APPS-HUB-Website.zip \
+            .
+
+          cd ..
+
+          ls -lh SIYOMA-APPS-HUB-Website.zip
+
+      - name: Generate SHA-256 checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          sha256sum SIYOMA-APPS-HUB-Website.zip \
+            | tee SIYOMA-APPS-HUB-Website.zip.sha256
+
+      - name: Upload website package
+        uses: actions/upload-artifact@v4
+        with:
+          name: SIYOMA-APPS-HUB-Website
+          path: |
+            SIYOMA-APPS-HUB-Website.zip
+            SIYOMA-APPS-HUB-Website.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Build completed successfully
+        shell: bash
+        run: |
+          echo "=========================================="
+          echo " SIYOMA APPS HUB BUILD SUCCESSFUL"
+          echo "=========================================="
+          echo ""
+          echo "Website package:"
+          echo "SIYOMA-APPS-HUB-Website.zip"
+          echo ""
+          echo "SHA-256 checksum:"
+          cat SIYOMA-APPS-HUB-Website.zip.sha256
+          echo ""
+          echo "The website package is ready for Netlify deployment."
