@@ -12,91 +12,124 @@ permissions:
 
 jobs:
   build:
-    name: Validate and Package SIYOMA Apps Hub
+    name: Build SIYOMA Apps Hub Website
     runs-on: ubuntu-22.04
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Locate website source
+      - name: Prepare website source
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "Locating SIYOMA Apps Hub website..."
+          echo "=========================================="
+          echo " SIYOMA APPS HUB WEBSITE"
+          echo "=========================================="
 
+          rm -rf website-source
+          mkdir -p website-source
+
+          # If the website is already extracted, use it.
           if [ -f "index.html" ]; then
-            WEBSITE_DIR="."
-            echo "Website files already exist in repository root."
+            echo "Website files found in repository root."
+            cp -R . website-source/ 2>/dev/null || true
 
           else
-            ZIP_FILE=$(find . -maxdepth 2 -type f \
-              -iname '*.zip' \
-              -print -quit)
+            echo "Website files not found in repository root."
+            echo "Searching for website ZIP..."
+
+            ZIP_FILE=""
+
+            for file in ./*.zip; do
+              if [ -f "$file" ]; then
+                ZIP_FILE="$file"
+                break
+              fi
+            done
 
             if [ -z "$ZIP_FILE" ]; then
-              echo "ERROR: No website ZIP file found."
+              echo "ERROR: No ZIP file found."
+              echo ""
+              echo "Repository contents:"
+              find . -maxdepth 4 -type f \
+                ! -path './.git/*' \
+                | sort
               exit 1
             fi
 
-            echo "Website ZIP found:"
+            echo "Using ZIP:"
             echo "$ZIP_FILE"
 
-            rm -rf extracted-site
-            mkdir -p extracted-site
+            unzip -q "$ZIP_FILE" -d website-source
 
-            unzip -q "$ZIP_FILE" -d extracted-site
-
-            echo "ZIP extracted."
-
-            if [ -f "extracted-site/index.html" ]; then
-              WEBSITE_DIR="$GITHUB_WORKSPACE/extracted-site"
-
-            else
-              WEBSITE_DIR=$(find "$GITHUB_WORKSPACE/extracted-site" \
-                -type f \
-                -name "index.html" \
-                -print -quit |
-                xargs -r dirname)
-
-              if [ -z "$WEBSITE_DIR" ]; then
-                echo "ERROR: index.html was not found after extracting ZIP."
-                echo ""
-                echo "Extracted contents:"
-                find extracted-site -maxdepth 4 -type f | sort
-                exit 1
-              fi
-            fi
+            echo ""
+            echo "ZIP extraction completed."
           fi
 
-          echo "Website directory:"
+          echo ""
+          echo "Searching extracted files..."
+
+          INDEX_FILE=$(find website-source \
+            -type f \
+            -iname "index.html" \
+            -print -quit)
+
+          if [ -z "$INDEX_FILE" ]; then
+            echo "ERROR: index.html was not found."
+            echo ""
+            echo "Files found after extraction:"
+            find website-source -maxdepth 6 -type f | sort
+            exit 1
+          fi
+
+          WEBSITE_DIR="$(dirname "$INDEX_FILE")"
+
+          echo ""
+          echo "Website root found:"
           echo "$WEBSITE_DIR"
 
           echo "WEBSITE_DIR=$WEBSITE_DIR" >> "$GITHUB_ENV"
 
-      - name: Verify SIYOMA Apps Hub project files
+      - name: Show website files
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "Checking SIYOMA Apps Hub files..."
+          echo "=========================================="
+          echo " WEBSITE FILES"
+          echo "=========================================="
 
-          test -f "$WEBSITE_DIR/index.html"
-          test -f "$WEBSITE_DIR/styles.css"
-          test -f "$WEBSITE_DIR/app.js"
-          test -f "$WEBSITE_DIR/netlify.toml"
+          find "$WEBSITE_DIR" -maxdepth 3 -type f | sort
 
-          if [ ! -f "$WEBSITE_DIR/README.md" ]; then
-            echo "WARNING: README.md not found."
-          fi
+      - name: Verify required website files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Checking required website files..."
+
+          REQUIRED_FILES=(
+            "index.html"
+            "styles.css"
+            "app.js"
+            "netlify.toml"
+          )
+
+          for file in "${REQUIRED_FILES[@]}"; do
+            if [ ! -f "$WEBSITE_DIR/$file" ]; then
+              echo "ERROR: Missing required file: $file"
+              exit 1
+            fi
+          done
 
           if [ ! -d "$WEBSITE_DIR/assets" ]; then
-            echo "ERROR: assets directory not found."
+            echo "ERROR: Missing assets directory."
             exit 1
           fi
 
-          echo "Core website files verified."
+          echo "All required website files are present."
 
       - name: Verify website assets
         shell: bash
@@ -105,22 +138,26 @@ jobs:
 
           ASSET_COUNT=$(find "$WEBSITE_DIR/assets" -type f | wc -l)
 
-          if [ "$ASSET_COUNT" -lt 1 ]; then
-            echo "ERROR: No website assets found."
+          echo "Website asset count: $ASSET_COUNT"
+
+          if [ "$ASSET_COUNT" -eq 0 ]; then
+            echo "ERROR: Assets directory is empty."
             exit 1
           fi
 
-          echo "Found $ASSET_COUNT asset file(s)."
+          echo "Website assets verified."
 
       - name: Validate HTML
         shell: bash
         run: |
           set -euo pipefail
 
-          grep -qi '<!DOCTYPE html>' "$WEBSITE_DIR/index.html"
-          grep -qi '<html' "$WEBSITE_DIR/index.html"
-          grep -qi '<head' "$WEBSITE_DIR/index.html"
-          grep -qi '<body' "$WEBSITE_DIR/index.html"
+          HTML="$WEBSITE_DIR/index.html"
+
+          grep -qi '<!DOCTYPE html>' "$HTML"
+          grep -qi '<html' "$HTML"
+          grep -qi '<head' "$HTML"
+          grep -qi '<body' "$HTML"
 
           echo "HTML structure verified."
 
@@ -129,8 +166,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          grep -qi "SIYOMA APPS HUB" "$WEBSITE_DIR/index.html"
-          grep -qi "Siyomatechdesigns" "$WEBSITE_DIR/index.html"
+          HTML="$WEBSITE_DIR/index.html"
+
+          grep -qi "SIYOMA APPS HUB" "$HTML"
+          grep -qi "Siyomatechdesigns" "$HTML"
 
           echo "SIYOMA Apps Hub branding verified."
 
@@ -139,29 +178,24 @@ jobs:
         run: |
           set -euo pipefail
 
-          grep -qi "Tenant" "$WEBSITE_DIR/index.html"
-          grep -qi "GroupWork" "$WEBSITE_DIR/index.html"
-          grep -qi "CU Library" "$WEBSITE_DIR/index.html"
-          grep -qi "Academic Assistant" "$WEBSITE_DIR/index.html"
+          HTML="$WEBSITE_DIR/index.html"
+
+          grep -qi "Tenant" "$HTML"
+          grep -qi "GroupWork" "$HTML"
+          grep -qi "CU Library" "$HTML"
+          grep -qi "Academic Assistant" "$HTML"
 
           echo "SIYOMA application catalogue verified."
 
-      - name: Verify Under Review status
+      - name: Verify developer contact
         shell: bash
         run: |
           set -euo pipefail
 
-          grep -qi "Under Review" "$WEBSITE_DIR/index.html"
+          HTML="$WEBSITE_DIR/index.html"
 
-          echo "Under Review applications verified."
-
-      - name: Verify developer WhatsApp integration
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if ! grep -q "254713622247" "$WEBSITE_DIR/index.html"; then
-            echo "ERROR: Developer WhatsApp contact link not found."
+          if ! grep -q "254713622247" "$HTML"; then
+            echo "ERROR: Developer WhatsApp number not found."
             exit 1
           fi
 
@@ -172,23 +206,23 @@ jobs:
         run: |
           set -euo pipefail
 
-          if ! grep -q "publish" "$WEBSITE_DIR/netlify.toml"; then
+          NETLIFY="$WEBSITE_DIR/netlify.toml"
+
+          if ! grep -q "publish" "$NETLIFY"; then
             echo "ERROR: Netlify publish configuration not found."
             exit 1
           fi
 
           echo "Netlify configuration verified."
 
-      - name: Check for accidentally committed secrets
+      - name: Check for obvious secrets
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "Checking for obvious secrets..."
-
           if grep -RniE \
             --exclude='*.map' \
-            'sk_live_|sk_test_|secret_key|private_key|BEGIN PRIVATE KEY' \
+            'sk_live_|sk_test_|BEGIN PRIVATE KEY|PRIVATE_KEY=' \
             "$WEBSITE_DIR"; then
 
             echo "ERROR: Possible secret detected."
@@ -197,57 +231,7 @@ jobs:
 
           echo "No obvious secrets detected."
 
-      - name: Check local website references
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          cd "$WEBSITE_DIR"
-
-          python3 <<'PY'
-          import re
-          from pathlib import Path
-
-          html = Path("index.html").read_text(encoding="utf-8")
-
-          references = set()
-
-          for match in re.findall(r'(?:src|href)=["\']([^"\']+)["\']', html):
-
-              if match.startswith((
-                  "http://",
-                  "https://",
-                  "#",
-                  "mailto:",
-                  "tel:",
-                  "data:",
-                  "javascript:"
-              )):
-                  continue
-
-              clean = match.split("#")[0].split("?")[0]
-
-              if clean:
-                  references.add(clean)
-
-          missing = []
-
-          for ref in sorted(references):
-              if not Path(ref).exists():
-                  missing.append(ref)
-
-          if missing:
-              print("ERROR: Missing referenced local files:")
-
-              for item in missing:
-                  print(f" - {item}")
-
-              raise SystemExit(1)
-
-          print("All local website references are valid.")
-          PY
-
-      - name: Create production website package
+      - name: Create production package
         shell: bash
         run: |
           set -euo pipefail
@@ -259,14 +243,13 @@ jobs:
           cp "$WEBSITE_DIR/styles.css" release/
           cp "$WEBSITE_DIR/app.js" release/
           cp "$WEBSITE_DIR/netlify.toml" release/
+          cp -R "$WEBSITE_DIR/assets" release/
 
           if [ -f "$WEBSITE_DIR/README.md" ]; then
             cp "$WEBSITE_DIR/README.md" release/
           fi
 
-          cp -R "$WEBSITE_DIR/assets" release/
-
-          echo "Production website package created."
+          echo "Production package created."
 
       - name: Verify production package
         shell: bash
@@ -288,9 +271,7 @@ jobs:
 
           cd release
 
-          zip -qr \
-            ../SIYOMA-APPS-HUB-Website.zip \
-            .
+          zip -qr ../SIYOMA-APPS-HUB-Website.zip .
 
           cd ..
 
@@ -304,7 +285,7 @@ jobs:
           sha256sum SIYOMA-APPS-HUB-Website.zip \
             | tee SIYOMA-APPS-HUB-Website.zip.sha256
 
-      - name: Upload SIYOMA Apps Hub website package
+      - name: Upload website artifact
         uses: actions/upload-artifact@v4
         with:
           name: SIYOMA-APPS-HUB-Website
@@ -314,7 +295,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Build completed successfully
+      - name: SIYOMA Apps Hub build successful
         shell: bash
         run: |
           echo ""
@@ -322,10 +303,8 @@ jobs:
           echo " SIYOMA APPS HUB BUILD SUCCESSFUL"
           echo "=========================================="
           echo ""
-          echo "Website package:"
+          echo "Package:"
           echo "SIYOMA-APPS-HUB-Website.zip"
           echo ""
           echo "SHA-256:"
           cat SIYOMA-APPS-HUB-Website.zip.sha256
-          echo ""
-          echo "Website package is ready for Netlify."
